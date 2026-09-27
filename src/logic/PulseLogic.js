@@ -12,7 +12,7 @@ import {
   NEUTRAL,
   MONO,
   ICONS,
-  REC_SECTIONS,
+  REC_SECTIONS as REC_SECTIONS_RAW,
   CONTACTS,
   FILE_TREE,
   ONTO_NODES,
@@ -34,7 +34,7 @@ import {
   SRC_TINT,
   SRC_ABBR,
   STREAM_DEFS,
-  NAV,
+  NAV as NAV_RAW,
   ITEMS,
   ORDER,
   synthesizeCustomArea,
@@ -66,6 +66,24 @@ import {
   buildGraph
 } from "./data";
 
+/* ── Locked layout ──────────────────────────────────────────────────────────
+   These two rules hold for every client build, whatever data.js says:
+   1. Records always opens on Ontology, and Ontology is always the first tab.
+      If a customisation drops or renames it, the stock Ontology tab is put back.
+   2. Agents always sits directly under Home in the side rail.
+   Re-theme and re-label freely; don't remove these guards. */
+const ONTOLOGY_SECTION = {id:"ontology", label:"Ontology", blurb:"How every record connects: entities, predicates and the paths between them."};
+const REC_SECTIONS = [REC_SECTIONS_RAW.find(s => s.id === "ontology") || ONTOLOGY_SECTION]
+  .concat(REC_SECTIONS_RAW.filter(s => s.id !== "ontology"));
+const NAV = (() => {
+  const items = NAV_RAW.filter(n => n.page !== "Home" && n.page !== "Agents");
+  const home = NAV_RAW.find(n => n.page === "Home") || {label:"Home", icon:"helios", page:"Home"};
+  const agents = NAV_RAW.find(n => n.page === "Agents") || {label:"Agents", icon:"navAgents", page:"Agents"};
+  // Leading dividers would otherwise sit between Agents and the next item.
+  while (items.length && items[0].divider) items.shift();
+  return [home, agents].concat(items);
+})();
+
 /* All state and behaviour for Pulse. renderVals() returns the flat object the views render from. */
 export default class PulseLogic extends DCLogic {
   state = { w: typeof window === "undefined" ? 1440 : window.innerWidth, theme:"harbour", page:"Home", draft:"", query:"", thread:[], typed:0, paletteOpen:false, showNotifs:false, palScope:"All", palSel:0, palRecent:["Dunne & Sons Ltd","Credit Control"],
@@ -78,7 +96,7 @@ export default class PulseLogic extends DCLogic {
             adminCard:null, adminFlags:{},
             adminOpen:null, adminFlags:{}, adminGroup:null,
             actPaused:false, actHover:null, actKpi:"all", actQuery:"", actOpen:null, actTick:0,
-            recSection:"contacts", recAsk:"", treeOpen:true, treeExpanded:{}, treeFile:"fl-1", treeQuery:"",
+            recSection:"ontology", recAsk:"", treeOpen:true, treeExpanded:{}, treeFile:"fl-1", treeQuery:"",
             ontoNode:"Organisation", ontoHover:null, ontoLayout:"Force",
             newRecOpen:false, newRecName:"", newRecTemplate:"Field sheet", newRecCat:"All",
             opsFilter:"all", opsOff:{}, opsOpen:null, opsScope:"week", opsDay:26, opsOrder:null, opsDrag:null,
@@ -3944,7 +3962,15 @@ export default class PulseLogic extends DCLogic {
         + "grid-template-columns:minmax(0,1fr) " + (mid ? "minmax(150px,340px)" : "44px") + " minmax(0,1fr)",
       barOpen: st.barOpen,
       railShut: !st.railOpen,
-      kpiBackdrop: this.props.kpiBackdrop || "#5f8f63",
+      kpiBackdrop: this.props.dashboardBackdrop || this.props.kpiBackdrop || "#5f8f63",
+      // One colour from App.tsx repaints the Records wash (and the New record
+      // dialog). It is blended into the theme's own --bg, so the same colour
+      // reads right in dark and light themes. Unset keeps the theme gradient.
+      rootVars: this.props.recordsBackdrop ? (() => {
+        const c = this.props.recordsBackdrop;
+        const m = (pct) => "color-mix(in oklab, " + c + " " + pct + "%, var(--bg))";
+        return {"--hero-grad": "linear-gradient(180deg," + m(10) + " 0%," + m(28) + " 20%," + m(55) + " 42%," + m(90) + " 62%," + m(48) + " 83%," + m(12) + " 100%)"};
+      })() : undefined,
       kpiBackdropOn: st.theme !== "light" && this.props.kpiBackdropOn !== false,
       railThumbStyle: "position:absolute;z-index:0;pointer-events:none;border-radius:14px;"
         + "background:var(--rail-active,var(--accent-faint));box-shadow:var(--rail-active-ring,inset 0 0 0 1px var(--accent-line));"
@@ -3996,23 +4022,19 @@ export default class PulseLogic extends DCLogic {
       showHint: roomy && st.barOpen,
       showSearchText: mid && st.barOpen,
       showProfileText: roomy,
-      navGroupStyle: "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:"
-        + (((st.w - (st.railOpen ? 252 : 68)) < 1000 && contextNav.length >= 4) ? "max-content" : "1fr") + ";"
+      // Tabs size to their own labels; NavThumb measures, so equal tracks aren't needed.
+      navGroupStyle: "position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:max-content;"
         + "width:max-content;max-width:100%;align-items:center;padding:0;flex:" + (contextNav.length <= 3 ? "none" : "0 1 auto") + ";min-width:0;border-radius:999px;"
         + "overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;"
         + "-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 14px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 14px),transparent)",
-      // Pure CSS: the group keeps equal 1fr tracks, so the pill is one track wide
-      // and stepped by index. Nothing is measured and nothing is written after
-      // render, so there is no mutation feedback loop and the transition survives.
-      navThumb: (() => {
-        const n = Math.max(1, contextNav.length);
-        const i = Math.max(0, contextNav.findIndex(t => t.active));
-        return "position:absolute;left:0;top:0;bottom:0;z-index:0;pointer-events:none;border-radius:999px;"
-          + "width:calc(100% / " + n + ");transform:translateX(" + (i * 100) + "%);"
-          + "background-color:var(--surface-2);box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 4px 12px rgba(0,0,0,.35);"
-          + "background-image:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%);background-blend-mode:overlay;"
-          + "transition:transform .46s cubic-bezier(.22,.9,.16,1)";
-      })(),
+      // Static look only. NavThumb measures the active tab and writes its own
+      // width and offset, so long labels, counts or an overflowing group can't
+      // push the pill off the tab it belongs to.
+      navThumb: "position:absolute;left:0;top:0;bottom:0;width:0;z-index:0;pointer-events:none;border-radius:999px;opacity:0;"
+        + "background-color:var(--surface-2);box-shadow:0 1px 0 rgba(255,255,255,.05) inset,0 4px 12px rgba(0,0,0,.35);"
+        + "background-image:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,0) 55%);background-blend-mode:overlay;"
+        + "transition:transform .46s cubic-bezier(.22,.9,.16,1),width .46s cubic-bezier(.22,.9,.16,1),opacity .2s",
+      navThumbKey: contextNav.map(t => (t.active ? "*" : "") + t.label).join("|"),
       searchStyle: "height:38px;justify-self:center;min-width:0;" + (mid ? "width:100%;padding:0 8px 0 15px;" : "width:44px;justify-content:center;padding:0;"),
       // The bar is one row: the fewer sub-nav segments a page has, the more of the
       // leftover width the search field takes.

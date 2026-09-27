@@ -29,9 +29,11 @@ npm run build      # type-check + production build into dist/
 - **`PulseLogic`** holds all state. Its `renderVals()` returns one flat object `v`.
 - **Views** are plain React components that render from `v`.
 - **`LogicHost`** (`src/runtime/logic.tsx`) mounts the logic and re-renders on `setState`.
-- **Tweaks** from the design live in `src/App.tsx`:
-  - `kpiBackdrop`: the colour of the Dashboard KPI background
+- **Backgrounds** live in `src/App.tsx`:
+  - `dashboardBackdrop`: the colour of the Dashboard KPI background
   - `kpiBackdropOn`: whether that background shows
+  - `recordsBackdrop`: the colour of the Records wash (`""` uses the theme gradient)
+- **Customising for a client:** read `CLAUDE.md` first. It lists the layout rules every copy keeps.
 
 ## Updating from Claude Design
 

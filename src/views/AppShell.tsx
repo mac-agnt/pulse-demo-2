@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { arr, cat, css, cx, txt } from "../runtime/template";
 import AgentFace from "../components/AgentFace";
+import NavThumb from "../components/NavThumb";
 import DashboardKpiBand from "./pages/DashboardKpiBand";
 import Home from "./pages/Home";
 import Work from "./pages/Work";
@@ -23,7 +24,7 @@ type Props = { v: any };
 export default function AppShell({ v }: Props) {
   return (
     <>
-    <div data-theme={v.theme} style={{"fontFamily":"var(--ui)","position":"relative","display":"flex","height":"100vh","overflow":"hidden","background":"var(--bg)","color":"var(--ink)"}}>
+    <div data-theme={v.theme} style={{"fontFamily":"var(--ui)","position":"relative","display":"flex","height":"100vh","overflow":"hidden","background":"var(--bg)","color":"var(--ink)",...v.rootVars}}>
       <div style={{"position":"absolute","width":"1px","height":"1px","overflow":"hidden","opacity":"0","pointerEvents":"none"}}>
         <AgentFace shape={"crown-pebble"} state={"idle"} tint={"#191c1f"} size={"1"} />
       </div>
@@ -203,7 +204,7 @@ export default function AppShell({ v }: Props) {
                 <div style={css(v.navGroupStyle)}>
                   {v.tabsLoose && (
                     <>
-                      <span style={css(v.navThumb)} />
+                      <NavThumb style={v.navThumb} tabsKey={v.navThumbKey} />
                     </>
                   )}
                   {arr(v.contextNav).map((t: any, i1: number) => (

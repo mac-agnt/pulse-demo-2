@@ -35,10 +35,11 @@ const ICONS = {
   bell:"M6 8.5a6 6 0 0 1 12 0c0 6.5 2.6 8.5 2.6 8.5H3.4S6 15 6 8.5Z M10.3 20.5a1.94 1.94 0 0 0 3.4 0"
 };
 
+/* Ontology stays first and is never removed (PulseLogic enforces this too). */
 const REC_SECTIONS = [
-  {id:"contacts", label:"Contacts", blurb:"Every person the business deals with, staff and external."},
+  {id:"ontology", label:"Ontology", blurb:"How every record connects: entities, predicates and the paths between them."},
   {id:"files", label:"Files", blurb:"Documents, contracts and certificates — indexed where Helios can read them."},
-  {id:"ontology", label:"Ontology", blurb:"How every record connects: entities, predicates and the paths between them."}
+  {id:"contacts", label:"Contacts", blurb:"Every person the business deals with, staff and external."}
 ];
 
 const CONTACTS = [
