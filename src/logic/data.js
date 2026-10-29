@@ -971,16 +971,17 @@ const STATE_LABELS = {working:"working", thinking:"thinking", waiting:"waiting o
   complete:"up to date", attention:"needs you", idle:"idle"};
 
 const FACE_SHAPES = [
-  ["crown-pebble","Crown pebble"],["executive-capsule","Executive capsule"],["shield","Shield"],
-  ["glass-visor","Glass visor"],["control-cube","Control cube"],["low-dome","Low dome"],
-  ["offset-pebble","Offset pebble"],["rim-capsule","Rim capsule"],["wide-eyed","Wide-eyed"],
+  ["crown-pebble","Pebble"],["executive-capsule","Executive"],["shield","Shield"],
+  ["glass-visor","Visor"],["control-cube","Control cube"],["low-dome","Low dome"],
+  ["offset-pebble","Offset pebble"],["rim-capsule","Capsule"],["wide-eyed","Wide-eyed"],
   ["precision-brow","Precision brow"],["tall-unit","Tall unit"],["soft-asymmetric","Soft asymmetric"]
 ];
-/* Shell colours only — deliberately desaturated so none of them reads as a
-   state. The eyes, rim and dots always carry the state colour. */
+/* Shell colours only, deliberately desaturated so none of them reads as a
+   state. Each is a pair: the deep shell for light themes and its pale partner
+   for dark ones (the eyes take the other). The status light carries the state. */
 const FACE_TINTS = [
-  ["#191c1f","Graphite"],["#1b2430","Slate"],["#241b2e","Aubergine"],
-  ["#2a2118","Bronze"],["#16241f","Pine"],["#2b1b1e","Oxblood"]
+  ["#191c1f","Graphite","#e3e6e8"],["#1b2430","Slate","#d3dde9"],["#241b2e","Aubergine","#ddd4ea"],
+  ["#2a2118","Bronze","#eadccb"],["#16241f","Pine","#d1e4da"],["#2b1b1e","Oxblood","#eed5d7"]
 ];
 
 /* ---- ontology graph: generation, Dijkstra traversal, canvas render ---- */

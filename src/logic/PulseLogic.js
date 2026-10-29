@@ -3826,9 +3826,11 @@ export default class PulseLogic extends DCLogic {
       }),
       tintChoices: FACE_TINTS.map(t => {
         const on = st.agentSpec.tint === t[0];
+        // Show the shell as the face wears it in this theme: deep on light themes, pale on dark.
+        const lightTheme = (THEMES.find(th => th.id === st.theme) || {}).group === "Light";
         return {label:t[1],
           style: "width:32px;height:32px;border-radius:var(--r-ctl,11px);cursor:pointer;padding:0;"
-            + "background:linear-gradient(160deg," + t[0] + ",#0b0d0f);"
+            + "background:" + (lightTheme ? t[0] : t[2]) + ";"
             + "transition:transform .2s var(--ease),border-color .2s var(--ease);"
             + (on ? "border:2px solid var(--accent);transform:scale(1.08)" : "border:1px solid var(--border)"),
           pick: () => this.setSpec({tint:t[0]})};

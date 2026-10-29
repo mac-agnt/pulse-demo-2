@@ -1,36 +1,119 @@
+import { useEffect, useId, useRef } from "react";
+import type { CSSProperties } from "react";
 import { css } from "../runtime/template";
+import { FACE_TINTS } from "../logic/data";
+import { eyePose, REST, trackFace } from "./agentGaze";
+import type { GazeEye, GazeSpec } from "./agentGaze";
 import "../styles/agent-face.css";
 
-/* Twelve shells from the agent family sheet, five states.
-   The shell colour is the agent's own; the eyes, rim and dots always carry the
-   state colour, so a recoloured agent can never be mistaken for a state. */
-const STATES: Record<string, { glow: string; core: string }> = {
-  working:   {glow:"#6aa6f0", core:"#cfe4ff"},
-  thinking:  {glow:"#e8b23a", core:"#ffe6ac"},
-  waiting:   {glow:"#9d7cf0", core:"#e0d4ff"},
-  complete:  {glow:"#4fd48a", core:"#c9f5dd"},
-  attention: {glow:"#e8705a", core:"#ffd2c8"},
-  idle:      {glow:"#7c8087", core:"#d5d8dc"}
+/* Twelve flat, evenly lit shells, each with its own kind of eyes.
+   The shell is the agent's own colour: pale on dark themes, deep on light ones,
+   with the eyes in the other of the pair. The state lives in the status light
+   on the shoulder, so a recoloured agent can never be mistaken for a state. */
+const STATES: Record<string, string> = {
+  working: "#6aa6f0", thinking: "#e8b23a", waiting: "#9d7cf0",
+  complete: "#4fd48a", attention: "#e8705a", idle: "#7c8087"
 };
 
-/* w/h/radius are fractions of the box. eye/dot positions are percentages of the shell. */
-// w/h kept in a tight band (.84–.92) so every shape reads the same visual
-// weight in a list, whatever its silhouette — the roughness was mostly the
-// shells swinging from .70 to .96 and looking like different-sized icons.
-const SHAPES: Record<string, any> = {
-  "crown-pebble":     {w:.88, h:.86, r:"46% 46% 44% 44% / 48% 48% 46% 46%", crown:1, cheeks:1, ring:1},
-  "executive-capsule":{w:.90, h:.80, r:"40%", brow:1, ring:1, ringR:"42%"},
-  "shield":           {w:.86, h:.90, r:"46% 46% 40% 40% / 56% 56% 40% 40%", dots:[[80,15]], ring:1, ringR:"48% 48% 42% 42% / 58% 58% 42% 42%"},
-  "glass-visor":      {w:.92, h:.78, r:"42%", visor:1, ring:1, ringR:"44%"},
-  "control-cube":     {w:.86, h:.86, r:"26%", dots:[[80,16],[20,80]], ring:1, ringR:"30%"},
-  "low-dome":         {w:.90, h:.80, r:"48% 48% 26% 26% / 62% 62% 34% 34%", crown:1, cheeks:1, ring:1, ringR:"50% 50% 28% 28% / 64% 64% 36% 36%"},
-  "offset-pebble":    {w:.86, h:.86, r:"50%", dots:[[80,14]], ring:1, ringR:"50%"},
-  "rim-capsule":      {w:.90, h:.82, r:"38%", visor:1, visorWide:1, ring:1, ringR:"40%"},
-  "wide-eyed":        {w:.92, h:.80, r:"46%", brow:1, ring:1, ringR:"48%"},
-  "precision-brow":   {w:.88, h:.80, r:"40%", brow:1, dots:[[16,78]], ring:1, ringR:"42%"},
-  "tall-unit":        {w:.76, h:.92, r:"34% 34% 32% 32% / 26% 26% 24% 24%", crown:1, ring:1, ringR:"38% 38% 36% 36% / 28% 28% 26% 26%"},
-  "soft-asymmetric":  {w:.90, h:.82, r:"48% 45% 44% 47% / 50% 48% 46% 44%", cheeks:1, dots:[[82,15]], ring:1, ringR:"50% 47% 46% 49% / 52% 50% 48% 46%"}
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Rounded box with elliptical corners [rx, ry]: tl, tr, br, bl. */
+function box(x: number, y: number, w: number, h: number, c: [number, number][]): string {
+  const [tl, tr, br, bl] = c;
+  return "M" + r2(x + tl[0]) + " " + y + "H" + r2(x + w - tr[0])
+    + "A" + tr[0] + " " + tr[1] + " 0 0 1 " + r2(x + w) + " " + r2(y + tr[1]) + "V" + r2(y + h - br[1])
+    + "A" + br[0] + " " + br[1] + " 0 0 1 " + r2(x + w - br[0]) + " " + r2(y + h) + "H" + r2(x + bl[0])
+    + "A" + bl[0] + " " + bl[1] + " 0 0 1 " + x + " " + r2(y + h - bl[1]) + "V" + r2(y + tl[1])
+    + "A" + tl[0] + " " + tl[1] + " 0 0 1 " + r2(x + tl[0]) + " " + y + "Z";
+}
+const rounded = (x: number, y: number, w: number, h: number, r: number) => box(x, y, w, h, [[r, r], [r, r], [r, r], [r, r]]);
+/** Centred pill (a circle when w = h). */
+const pill = (w: number, h: number) => rounded(-w / 2, -h / 2, w, h, Math.min(w, h) / 2);
+
+function squircle(a: number, b: number, n: number): string {
+  let d = "";
+  for (let i = 0; i < 72; i++) {
+    const t = (i / 72) * Math.PI * 2, c = Math.cos(t), s = Math.sin(t);
+    const x = 50 + a * Math.sign(c) * Math.pow(Math.abs(c), 2 / n);
+    const y = 50 + b * Math.sign(s) * Math.pow(Math.abs(s), 2 / n);
+    d += (i ? "L" : "M") + r2(x) + " " + r2(y);
+  }
+  return d + "Z";
+}
+
+/** Smooth closed curve through points on a wobbly ellipse. */
+function pebble(radii: number[], rx: number, ry: number, turn: number): string {
+  const n = radii.length;
+  const p = radii.map((k, i) => {
+    const a = turn + (i / n) * Math.PI * 2;
+    return [50 + Math.cos(a) * rx * k, 50 + Math.sin(a) * ry * k];
+  });
+  let d = "M" + r2(p[0][0]) + " " + r2(p[0][1]);
+  for (let i = 0; i < n; i++) {
+    const p0 = p[(i - 1 + n) % n], p1 = p[i], p2 = p[(i + 1) % n], p3 = p[(i + 2) % n];
+    d += "C" + r2(p1[0] + (p2[0] - p0[0]) / 6) + " " + r2(p1[1] + (p2[1] - p0[1]) / 6)
+      + " " + r2(p2[0] - (p3[0] - p1[0]) / 6) + " " + r2(p2[1] - (p3[1] - p1[1]) / 6)
+      + " " + r2(p2[0]) + " " + r2(p2[1]);
+  }
+  return d + "Z";
+}
+
+const CIRCLE = rounded(6, 6, 88, 88, 44);
+
+type EyeKind = { d: string; ex: number; ey: number; rot?: number };
+const pair = (k: EyeKind): GazeEye[] => k.ex
+  ? [{ex: -k.ex, ey: k.ey, rot: k.rot}, {ex: k.ex, ey: k.ey, rot: k.rot ? -k.rot : 0}]
+  : [{ex: 0, ey: k.ey}];
+
+const EYES: Record<string, EyeKind> = {
+  capsule:  {d: pill(10.5, 19), ex: .34, ey: .07},
+  dot:      {d: pill(11.5, 11.5), ex: .34, ey: .05},
+  small:    {d: pill(9.5, 9.5), ex: .36, ey: .3},
+  round:    {d: pill(16, 16), ex: .38, ey: .05},
+  bean:     {d: pill(16.5, 10.5), ex: .38, ey: .05},
+  slit:     {d: pill(17, 5.5), ex: .4, ey: .03},
+  visor:    {d: pill(50, 11.5), ex: 0, ey: .06},
+  single:   {d: pill(13.5, 22), ex: 0, ey: .07},
+  block:    {d: rounded(-6.5, -6.5, 13, 13, 3.6), ex: .34, ey: .05},
+  // Flat-bottomed half moons read as a smile; flat-topped ones as a lowered lid.
+  moon:     {d: "M-8 3.6A8 8.6 0 0 1 8 3.6Z", ex: .38, ey: .04},
+  lid:      {d: "M-6.5 -5.5H6.5V0A6.5 6.5 0 0 1 -6.5 0Z", ex: .36, ey: .06},
+  tilt:     {d: "M-5.8 0A5.8 9 0 1 0 5.8 0A5.8 9 0 1 0 -5.8 0Z", ex: .34, ey: .08, rot: 14}
 };
+
+type Variant = { body: string; light: [number, number]; gaze: Omit<GazeSpec, "eyes">; eye: string };
+
+const VARIANTS: Record<string, Variant> = {
+  "crown-pebble":      {body: squircle(44, 42, 2.7), light: [83, 18], gaze: {sx: 40, sy: 38, cx: 50, cy: 50, travel: 1}, eye: "capsule"},
+  "executive-capsule": {body: rounded(6, 13, 88, 74, 30), light: [85, 22], gaze: {sx: 40, sy: 33, cx: 50, cy: 50, travel: .9}, eye: "dot"},
+  "shield":            {body: "M50 7C75 7 92 17 92 39C92 63 75 92 50 93C25 92 8 63 8 39C8 17 25 7 50 7Z", light: [84, 21],
+                        gaze: {sx: 38, sy: 36, cx: 50, cy: 45, travel: .85}, eye: "tilt"},
+  "glass-visor":       {body: CIRCLE, light: [81, 19], gaze: {sx: 42, sy: 42, cx: 50, cy: 50, travel: .62}, eye: "visor"},
+  "control-cube":      {body: rounded(8, 8, 84, 84, 24), light: [85, 15], gaze: {sx: 40, sy: 40, cx: 50, cy: 50, travel: .85}, eye: "block"},
+  "low-dome":          {body: box(6, 8, 88, 84, [[44, 52], [44, 52], [18, 16], [18, 16]]), light: [81, 22],
+                        gaze: {sx: 40, sy: 36, cx: 50, cy: 55, travel: .9}, eye: "moon"},
+  "offset-pebble":     {body: pebble([1, .95, 1.03, .97, 1.04, .94, 1.01, 1.03], 44, 42, .35), light: [82, 19],
+                        gaze: {sx: 39, sy: 37, cx: 51, cy: 50, travel: .9}, eye: "bean"},
+  "rim-capsule":       {body: rounded(5, 20, 90, 60, 30), light: [86, 29], gaze: {sx: 42, sy: 26, cx: 50, cy: 50, travel: .85}, eye: "slit"},
+  "wide-eyed":         {body: CIRCLE, light: [81, 19], gaze: {sx: 42, sy: 42, cx: 50, cy: 50, travel: .85}, eye: "round"},
+  "precision-brow":    {body: rounded(10, 6, 80, 88, 28), light: [82, 14], gaze: {sx: 35, sy: 40, cx: 50, cy: 50, travel: .85}, eye: "lid"},
+  "tall-unit":         {body: rounded(17, 4, 66, 92, 33), light: [74, 14], gaze: {sx: 28, sy: 40, cx: 50, cy: 46, travel: .8}, eye: "small"},
+  "soft-asymmetric":   {body: pebble([1.03, .96, 1, 1.05, .95, 1.02, .97, 1], 44, 42, -.2), light: [83, 20],
+                        gaze: {sx: 40, sy: 38, cx: 49, cy: 50, travel: .8}, eye: "single"}
+};
+
+const PALE = new Map<string, string>(FACE_TINTS.map((t: string[]) => [t[0].toLowerCase(), t[2]]));
+
+/** A tint outside the palette still gets a pale partner: the tint mixed most of the way to white. */
+function paleOf(tint: string): string {
+  const hit = PALE.get(tint.toLowerCase());
+  if (hit) return hit;
+  const h = tint.replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return "#e4e6e8";
+  const n = parseInt(h, 16);
+  const mix = (c: number) => Math.round(c + (255 - c) * .86).toString(16).padStart(2, "0");
+  return "#" + mix(n >> 16) + mix((n >> 8) & 255) + mix(n & 255);
+}
 
 type FaceProps = {
   shape?: string;
@@ -40,103 +123,6 @@ type FaceProps = {
   /** Position-only styles placed on the host wrapper. */
   hostStyle?: string | Record<string, string>;
 };
-
-function faceVals(props: FaceProps) {
-    const size = Number(props.size) || 40;
-    const shapeId = props.shape || "crown-pebble";
-    const s = SHAPES[shapeId] || SHAPES["crown-pebble"];
-    const st = STATES[props.state ?? ""] || STATES.idle;
-    const tint = props.tint || "#191c1f";
-    // Must not clamp: negative values are real here (centring offsets).
-    const px = (n) => (Math.round(n * 100) / 100) + "px";
-    const dim = (n) => Math.max(1, Math.round(n * 100) / 100) + "px";
-    const u = size / 40;
-
-    // A stable per-agent seed (shape+tint+size never changes for a given agent),
-    // so each face blinks/winks on its own clock instead of every instance in a
-    // list snapping shut in unison.
-    const seedStr = shapeId + tint + size;
-    let seed = 0;
-    for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
-    const rnd = (n) => ((seed >>> (n % 24)) & 255) / 255;
-    // One shared cycle length and start phase for the pair, so both eyes gaze
-    // and blink in lockstep — only the wink keyframe (right eye only) departs from it.
-    const gazeDur = (10 + rnd(7) * 6).toFixed(2);
-    const gazeDelay = -(rnd(13) * +gazeDur).toFixed(2);
-
-    const w = size * s.w, h = size * s.h;
-    const eyeW = Math.max(4.5, size * 0.185), eyeH = Math.max(2.4, size * 0.105);
-    // The gap between the eyes is derived from the eye width, not the shell width,
-    // so the pair can never close up into a single blob at small sizes.
-    const eyeOffset = eyeW * (s.visor ? 0.98 : 0.92);
-    const eyeTop = s.crown ? 52 : 50;
-
-    const glowSoft = "0 0 " + px(3 * u) + " #ffffffb0, 0 0 " + px(7 * u) + " " + st.glow + "e6, 0 0 " + px(16 * u) + " " + st.glow + "70";
-    const live = props.state === "working" || props.state === "thinking";
-    const eye = (dx, isRight) => "position:absolute;left:50%;top:" + eyeTop + "%;width:" + dim(eyeW) + ";height:" + dim(eyeH)
-      + ";margin-left:" + px(dx * eyeOffset - eyeW / 2) + ";margin-top:" + px(-eyeH / 2)
-      + ";border-radius:999px;background:linear-gradient(180deg,#ffffff 0%," + st.core + " 42%," + st.glow + " 100%);"
-      + "box-shadow:" + glowSoft + ";pointer-events:none;transform-origin:center;"
-      + "animation:" + (isRight ? "agentGazeR" : "agentGazeL") + " " + gazeDur + "s ease-in-out " + gazeDelay + "s infinite";
-
-    const dots = (s.dots || []).map(d => ({
-      style: "position:absolute;left:" + d[0] + "%;top:" + d[1] + "%;width:" + px(3.2 * u) + ";height:" + px(3.2 * u)
-        + ";margin:" + px(-1.6 * u) + " 0 0 " + px(-1.6 * u)
-        + ";border-radius:50%;background:" + st.glow + ";box-shadow:0 0 " + px(5 * u) + " " + st.glow + "cc;pointer-events:none"
-    }));
-
-    return {
-      wrap: "position:relative;width:" + dim(size) + ";height:" + dim(size) + ";flex:none;display:block",
-      halo: "position:absolute;left:50%;top:50%;width:" + px(w * 1.5) + ";height:" + px(h * 1.5)
-        + ";transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;filter:blur(" + px(5 * u) + ");"
-        + "background:radial-gradient(closest-side," + st.glow + "3a, transparent 72%);"
-        + (live ? "animation:agentHalo 3.4s ease-in-out infinite" : "opacity:.55"),
-      rim: "position:absolute;inset:0;border-radius:inherit;pointer-events:none;"
-        + "background:radial-gradient(120% 80% at 50% 118%, " + st.glow + "33, transparent 62%);"
-        + "box-shadow:inset 0 0 " + px(6 * u) + " " + st.glow + "22",
-      chin: "position:absolute;left:22%;right:22%;bottom:" + px(1.6 * u) + ";height:" + px(1.2 * u)
-        + ";border-radius:999px;pointer-events:none;background:" + st.glow + ";opacity:.3;filter:blur(" + px(0.8 * u) + ")",
-      hasRing: !!s.ring,
-      ring: "position:absolute;left:50%;top:50%;width:" + px(w + 8 * u) + ";height:" + px(h + 8 * u)
-        + ";transform:translate(-50%,-50%);border-radius:" + (s.ringR || s.r)
-        + ";border:" + px(1 * u) + " solid " + st.glow + "26;pointer-events:none",
-      arc: "position:absolute;left:50%;top:50%;width:" + px(w + 4 * u) + ";height:" + px(h + 4 * u)
-        + ";transform:translate(-50%,-50%) rotate(-38deg);border-radius:" + (s.ringR || s.r)
-        + ";border:" + px(1.3 * u) + " solid transparent;border-top-color:" + st.glow + "f0;border-left-color:" + st.glow + "70;"
-        + "filter:drop-shadow(0 0 " + px(3 * u) + " " + st.glow + "80);pointer-events:none;"
-        + (live ? "animation:agentArcSpin 4.8s linear infinite" : ""),
-      shell: "position:absolute;left:50%;top:50%;width:" + dim(w) + ";height:" + dim(h)
-        + ";transform:translate(-50%,-50%);border-radius:" + s.r + ";overflow:hidden;"
-        + "border:" + px(Math.max(0.6, 0.9 * u)) + " solid rgba(255,255,255,.11);"
-        + "background:radial-gradient(125% 92% at 30% -6%, rgba(255,255,255,.26), rgba(255,255,255,.03) 34%, rgba(0,0,0,.5) 100%), "
-        + "linear-gradient(168deg, " + tint + " 0%, " + tint + " 34%, #040507 96%);"
-        + "box-shadow:inset 0 " + px(1 * u) + " 0 rgba(255,255,255,.3), inset 0 " + px(-1.8 * u) + " " + px(4 * u) + " rgba(0,0,0,.62), "
-        + "0 0 " + px(1 * u) + " " + st.glow + "3a, 0 " + px(3 * u) + " " + px(11 * u) + " rgba(0,0,0,.58)",
-      gloss: "position:absolute;left:15%;top:4%;width:56%;height:22%;border-radius:50%;"
-        + "background:radial-gradient(closest-side, rgba(255,255,255,.26), rgba(255,255,255,0));pointer-events:none",
-      hasCrown: !!s.crown,
-      crown: "position:absolute;left:50%;top:0;width:" + dim(w * 0.32) + ";height:" + dim(5.6 * u)
-        + ";margin-left:" + px(-w * 0.16) + ";border-radius:0 0 999px 999px;z-index:2;"
-        + "background:linear-gradient(180deg,#ffffff," + st.core + " 45%," + st.glow + ");"
-        + "box-shadow:0 0 " + dim(10 * u) + " " + st.glow + "cc",
-      hasBrow: !!s.brow,
-      brow: "position:absolute;left:14%;top:" + (eyeTop - 17) + "%;width:72%;height:" + px(1.5 * u)
-        + ";border-radius:999px;background:" + st.glow + ";opacity:.72;box-shadow:0 0 " + px(6 * u) + " " + st.glow + "88;pointer-events:none",
-      hasVisor: !!s.visor,
-      visor: "position:absolute;left:50%;top:" + eyeTop + "%;width:" + px(s.visorWide ? w * 0.82 : w * 0.72)
-        + ";height:" + px(11 * u) + ";transform:translate(-50%,-50%);border-radius:999px;"
-        + "border:" + px(1.1 * u) + " solid " + st.glow + "b0;background:rgba(0,0,0,.34);"
-        + "box-shadow:0 0 " + px(9 * u) + " " + st.glow + "44, inset 0 0 " + px(6 * u) + " rgba(0,0,0,.5)",
-      bareEyes: !s.visor,
-      eyeL: eye(-1, false), eyeR: eye(1, true),
-      hasCheeks: !!s.cheeks,
-      cheekL: "position:absolute;left:16%;top:" + (eyeTop + 17) + "%;width:16%;height:" + px(1.6 * u)
-        + ";border-radius:999px;background:" + st.glow + ";opacity:.34;pointer-events:none",
-      cheekR: "position:absolute;right:16%;top:" + (eyeTop + 17) + "%;width:16%;height:" + px(1.6 * u)
-        + ";border-radius:999px;background:" + st.glow + ";opacity:.34;pointer-events:none",
-      dots
-    };
-  }
 
 const HOST_STYLE_PROPS = new Set(["position", "left", "right", "top", "bottom", "inset", "width", "height", "z-index", "transform"]);
 
@@ -150,48 +136,49 @@ function hostPositionStyle(style: FaceProps["hostStyle"]) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** An agent's face: the shell is the agent's own colour, the eyes and rim carry its state. */
+/** An agent's face: the shell is the agent's own colour, the status light carries its state. */
 export default function AgentFace(props: FaceProps) {
-  const v = faceVals(props);
+  const size = Number(props.size) || 40;
+  const shape = VARIANTS[props.shape || ""] ? props.shape! : "crown-pebble";
+  const state = STATES[props.state ?? ""] ? props.state! : "idle";
+  const tint = props.tint || "#191c1f";
+  const v = VARIANTS[shape];
+  const kind = EYES[v.eye];
+  const spec: GazeSpec = {...v.gaze, eyes: pair(kind)};
+  const mask = "ao" + useId().replace(/:/g, "");
+  const ref = useRef<SVGSVGElement>(null);
+
+  // Faces too small to see (the hidden preload in the shell) stay still.
+  useEffect(() => {
+    if (!ref.current || size < 12) return;
+    return trackFace(ref.current, spec, state, size);
+    // spec is derived from shape alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape, state, size]);
+
+  // Small faces get a relatively bigger light so the state still reads at 20px.
+  const lightR = size < 28 ? 10.5 : 8;
+  const live = state === "working" || state === "thinking";
+  const vars = {"--ao-tint": tint, "--ao-pale": paleOf(tint)} as CSSProperties;
+
   return (
     <div className="sc-host" data-sc-name="AgentFace" style={hostPositionStyle(props.hostStyle)}>
-      <div style={css(v.wrap)}>
-        <div data-agent-halo="" style={css(v.halo)} />
-        {v.hasRing && (
-          <>
-            <div style={css(v.ring)} />
-            <div data-agent-arc="" style={css(v.arc)} />
-          </>
-        )}
-        <div style={css(v.shell)}>
-          <div style={css(v.rim)} />
-          <div style={css(v.gloss)} />
-          <div style={css(v.chin)} />
-          {v.hasCrown && <div style={css(v.crown)} />}
-          {v.hasBrow && <div style={css(v.brow)} />}
-          {v.hasVisor && (
-            <div style={css(v.visor)}>
-              <div data-agent-eye="" style={css(v.eyeL)} />
-              <div data-agent-eye="" style={css(v.eyeR)} />
-            </div>
-          )}
-          {v.bareEyes && (
-            <>
-              <div data-agent-eye="" style={css(v.eyeL)} />
-              <div data-agent-eye="" style={css(v.eyeR)} />
-            </>
-          )}
-          {v.hasCheeks && (
-            <>
-              <div style={css(v.cheekL)} />
-              <div style={css(v.cheekR)} />
-            </>
-          )}
-          {v.dots.map((d, i) => (
-            <div key={i} style={css(d.style)} />
+      <svg ref={ref} data-agent-orb="" width={size} height={size} viewBox="0 0 100 100" aria-hidden="true"
+        style={{...vars, display: "block", flex: "none", overflow: "visible"}}>
+        <mask id={mask} maskUnits="userSpaceOnUse" x="-10" y="-10" width="120" height="120">
+          <rect x="-10" y="-10" width="120" height="120" fill="#fff" />
+          <circle cx={v.light[0]} cy={v.light[1]} r={lightR + 4} fill="#000" />
+        </mask>
+        <g mask={"url(#" + mask + ")"}>
+          <path className="ao-body" d={v.body} />
+          {spec.eyes.map((e, i) => (
+            <g key={i} data-agent-eye="" transform={eyePose(spec, e, REST.x, REST.y)}>
+              <path className="ao-eye" d={kind.d} />
+            </g>
           ))}
-        </div>
-      </div>
+        </g>
+        <circle data-agent-light={live ? "live" : ""} cx={v.light[0]} cy={v.light[1]} r={lightR} fill={STATES[state]} />
+      </svg>
     </div>
   );
 }
